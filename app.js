@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require('express');
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken") ;
 const app  = express() ;
 const port = process.env.PORT || 4000; 
@@ -11,27 +12,20 @@ app.use('*', cors());
 
 //database connection start with mongoDB 
 
-const options = { useNewUrlParser: true, useUnifiedTopology: true  }
-mongoose
-  .connect(mongoDB_url, options)
-  .then(() =>  console.log("Successfully connected with mongoDB !! "))
-  .catch(error => {
-    throw error
-  });
-
-//database connection start with mongoDB 
-
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const client = new MongoClient(mongoDB_url, { useNewUrlParser: true, useUnifiedTopology: true, serverApi: ServerApiVersion.v1 });
+ const client = new MongoClient(mongoDB_url, { useNewUrlParser: true, useUnifiedTopology: true, serverApi: ServerApiVersion.v1 });
+if(client){
+  console.log("MongoDB server running successfully !!")
+}
 const booksCollection = client.db("book-store").collection("books");
 const usersCollection = client.db("book-store").collection("users");
 
-// database connection end with mongoDB  
+// database connection end with mongoDB   
 
 //verify token
-const verifyToken = (req , res , next ) => {
+const verifyToken = (req , res , next ) => { 
   const token = req.headers.authentication ; 
-  const getToken = token.split(" ")[1] ;
+  const getToken = token.split(" ")[1] ; 
  jwt.verify(getToken , process.env.token , (error , decodedData) => {
   if(error) {
       return res.status(403).send({message:"unauthorize access"}) ;
@@ -77,7 +71,7 @@ app.put("/editBook" , verifyToken , async (req, res) => {
 const updateData = req.body ;
 const option = {upsert:true} ;
 const id = req.query.id ;
-const query = {_id:new ObjectId(id)} ;
+const query = {_id: new ObjectId(id)} ;
 const updatedDocument = {
   $set:{
     isbn:updateData.isbn,
@@ -88,7 +82,8 @@ const updatedDocument = {
     publisher:updateData.publisher,
     bookName:updateData.bookName,
     bookImage:updateData.bookImage, 
-    updated_date:updateData.date
+    updated_date:updateData.date,
+    price:updateData.price
   }
 } 
 //check user
@@ -106,7 +101,7 @@ if(findEmail?.email === decodedEmail) {
 
 app.get("/bookData/:id" , async (req ,res) => {
   const id = req.params.id ;
-  const resut = await booksCollection.findOne({_id: new ObjectId(id)}) ;
+  const resut = await booksCollection.findOne({_id:  new ObjectId(id)}) ;
   res.status(201).send(resut) ;
   })
 
@@ -116,7 +111,7 @@ app.get("/bookData/:id" , async (req ,res) => {
    const id = req.query.id ;
    const email = req.query.email ;
    const decodedEmail = req.decodedData?.email ;
-   const query = {_id : new ObjectId(id)} ;
+   const query = {_id :  new ObjectId(id)} ;
     //check user
    if(email === decodedEmail) {
     const result = await booksCollection.deleteOne(query) ;
@@ -125,7 +120,7 @@ app.get("/bookData/:id" , async (req ,res) => {
     res.status(403).send("ERROR") ;
   }
   });
-  //create new user
+  //create  user
   app.post("/users" , async(req , res) => {
    const insertingData = req.body ;
    const findData  = await usersCollection.findOne({email:req.body.email}) ;
@@ -148,7 +143,62 @@ app.get("/bookData/:id" , async (req ,res) => {
      })
   
   //database connection end with mongoDB 
-  
+  //
+    //update database
+    app.put("/updateDatabase",verifyToken , async (req, res) => {
+
+      const updateInfo = req.body;
+      console.log(updateInfo);
+      //update orders payment status 
+      const ordersId = req.body.ordersId;
+      const ordersQuery = { _id: new ObjectId(ordersId) };
+      const updateOrdersDoc = {
+         $set: {
+            paid: true,
+         }
+      }
+      const updatedOrdersResult = await booksCollection.
+         updateOne(ordersQuery, updateOrdersDoc);
+      //update products advertise 
+      const productsId = req.body.productsId;
+      const productsQuery = { _id:  new ObjectId(productsId) }
+      const productsUpdatedDoc = {
+         $set: {
+            product: "sold", 
+            paid:"paid" ,
+         }
+      }
+      const updateProductInformations = await booksCollection.
+         updateOne(productsQuery, productsUpdatedDoc);
+      res.status(201).send({
+         updatedOrdersResult: updatedOrdersResult,
+         updateProductInformations: updateProductInformations,
+      })
+   })
+   //calculation of payment  
+   const calculateOrderAmount = (price) => {
+    const recivePrice = price * 100;
+    return recivePrice;
+ };
+ 
+   //create payment intent
+   app.post("/create-payment-intent/", verifyToken, async (req, res) => {
+    const price = req.params.price ;
+    // Create a PaymentIntent with the order amount and currency
+    const paymentIntent = await stripe.paymentIntents.create({
+       amount: calculateOrderAmount(price ? price : 12),
+       currency: "usd", 
+       "payment_method_types": [
+          "card"
+       ]
+    });
+
+    res.send({
+       clientSecret: paymentIntent.client_secret,
+    });
+ });
+
+
   // create jwt token 
   app.post("/jwt" , async(req, res) => {
   const email = req.body ;
@@ -171,7 +221,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 
 // //book schema for graphQL
 // function bookSchema () {
-// var bookType = new GraphQLObjectType({
+// var bookType =  GraphQLObjectType({
 //   name: 'book',
 //   fields: function () {
 //     return {
@@ -205,16 +255,16 @@ app.get("/bookData/:id" , async (req ,res) => {
 
 // //
 
-// var queryType = new GraphQLObjectType({
+// var queryType =  GraphQLObjectType({
 //   name: 'Query',
 //   fields:  function () {
 //     return {
 //       books: {
-//         type: new GraphQLList(bookType),
+//         type:  GraphQLList(bookType),
 //         resolve:async function () {
 //           const books = await bookInfo.find().exec()
 //           if (!books) {
-//             throw new Error('Error')
+//             throw  Error('Error')
 //           }
 //           return books
 //         }
@@ -230,7 +280,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 //         resolve: async function (root, params) {
 //           const bookDetails = await bookInfo.findById(params.id).exec();
 //           if (!bookDetails) {
-//             throw new Error('Error')
+//             throw  Error('Error')
 //           }
 //           return bookDetails
 //         }
@@ -240,7 +290,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 // });
 
 
-// var mutation = new GraphQLObjectType({
+// var mutation =  GraphQLObjectType({
 //   name: 'Mutation',
 //   fields: function () {
 //     return {
@@ -249,31 +299,31 @@ app.get("/bookData/:id" , async (req ,res) => {
 //         type: bookType,
 //         args: {
 //           isbn: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           title: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           author: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           description: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           published_year: {
-//             type: new GraphQLNonNull(GraphQLInt)
+//             type:  GraphQLNonNull(GraphQLInt)
 //           },
 //           publisher: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           }
 //         },
 //         resolve: async function  (root, params) {
-//           const bookModel =  new bookInfo(params);
-//           const newBook = await  bookModel.save();
-//           if (!newBook) {
-//             throw new Error('Error');
+//           const bookModel =   bookInfo(params);
+//           const Book = await  bookModel.save();
+//           if (!Book) {
+//             throw  Error('Error');
 //           }
-//           return newBook
+//           return Book
 //         }
 //       },
 // //update 
@@ -282,29 +332,29 @@ app.get("/bookData/:id" , async (req ,res) => {
 //         args: {
 //           id: {
 //             name: 'id',
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           isbn: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           title: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           author: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           description: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           },
 //           published_year: {
-//             type: new GraphQLNonNull(GraphQLInt)
+//             type:  GraphQLNonNull(GraphQLInt)
 //           },
 //           publisher: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           }
 //         },
 //         resolve: async function (root, params) {
-//           await bookInfo.findByIdAndUpdate(params.id, { isbn: params.isbn, title: params.title, author: params.author, description: params.description, published_year: params.published_year, publisher: params.publisher, updated_date: new Date() }, function (err) {
+//           await bookInfo.findByIdAndUpdate(params.id, { isbn: params.isbn, title: params.title, author: params.author, description: params.description, published_year: params.published_year, publisher: params.publisher, updated_date:  Date() }, function (err) {
 //             if (err) return next(err);
 //           });
 //         }
@@ -314,13 +364,13 @@ app.get("/bookData/:id" , async (req ,res) => {
 //         type: bookType,
 //         args: {
 //           id: {
-//             type: new GraphQLNonNull(GraphQLString)
+//             type:  GraphQLNonNull(GraphQLString)
 //           }
 //         },
 //         resolve:async function(root, params) {
 //           const remBook = await bookInfo.findByIdAndRemove(params.id).exec();
 //           if (!remBook) {
-//             throw new Error('Error')
+//             throw  Error('Error')
 //           }
 //           return remBook;
 //         }
@@ -330,7 +380,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 //     }
 //   }
 // });
-// return  new GraphQLSchema({query:queryType, mutation: mutation });  ;
+// return   GraphQLSchema({query:queryType, mutation: mutation });  ;
 // }
 // //>>------------------>>---------->> schema end 
 
@@ -345,7 +395,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 
 
 
-// var paginationType = new GraphQLObjectType({
+// var paginationType =  GraphQLObjectType({
 //   name: 'bookQuery',
 //   fields: function () {
 //     return {
@@ -360,16 +410,16 @@ app.get("/bookData/:id" , async (req ,res) => {
 //   }
 //   });
   
-//   var paginationQuery = new GraphQLObjectType({
+//   var paginationQuery =  GraphQLObjectType({
 //   name: 'paginationQuery',
 //   fields:  function () {
 //     return {
 //       booksQuery: {
-//         type: new GraphQLList(paginationType),
+//         type:  GraphQLList(paginationType),
 //         resolve:async function () {
 //           const data = await bookInfo.find();
 //           if (!data) {
-//             throw new Error('Error')
+//             throw  Error('Error')
 //           }
 //           return data
 //         }
@@ -379,7 +429,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 //     }
 //     }) ;
   
-//     var paginationMutaion = new GraphQLObjectType({
+//     var paginationMutaion =  GraphQLObjectType({
 //       name: 'mutation',
 //       fields: function () {
 //         return {
@@ -387,10 +437,10 @@ app.get("/bookData/:id" , async (req ,res) => {
 //             type: paginationType,
 //             args: {
 //               page: {
-//                 type: new GraphQLNonNull(GraphQLString)
+//                 type:  GraphQLNonNull(GraphQLString)
 //               },
 //               size: {
-//                 type: new GraphQLNonNull(GraphQLString)
+//                 type:  GraphQLNonNull(GraphQLString)
 //               }
 //             },
 //             resolve: async function  (root, params) {
@@ -403,7 +453,7 @@ app.get("/bookData/:id" , async (req ,res) => {
 //               const paginationData = { count, data } ;
   
 //               if (!paginationData) {
-//                 throw new Error('Error');
+//                 throw  Error('Error');
 //               }
 //               return paginationData
 //             }
